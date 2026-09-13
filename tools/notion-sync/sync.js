@@ -4,6 +4,7 @@
 // context on every call). Usage:
 //
 //   node sync.js update <relative-md-path>                     # replace an existing page's content
+//   node sync.js update-all                                    # replace all pages tracked in page-map.json
 //   node sync.js create <relative-md-path> --title "..." --icon "🔬" --parent <page_id>
 //
 // Paths are relative to worldbuilding/. Page IDs are tracked in page-map.json.
@@ -13,6 +14,7 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 const { Client } = require("@notionhq/client");
 const { markdownToBlocks } = require("@tryfabric/martian");
+const { HttpsProxyAgent } = require("https-proxy-agent");
 
 const WORLDBUILDING_ROOT = path.join(__dirname, "..", "..", "worldbuilding");
 const PAGE_MAP_PATH = path.join(__dirname, "page-map.json");
@@ -100,6 +102,31 @@ async function cmdUpdate(notion, relPath) {
   console.log(`✅ 갱신 완료: ${relPath} -> https://app.notion.com/p/${pageId.replace(/-/g, "")}`);
 }
 
+async function cmdUpdateAll(notion) {
+  const map = loadPageMap();
+  const relPaths = Object.keys(map);
+  if (relPaths.length === 0) {
+    console.log("page-map.json이 비어 있습니다. 갱신할 페이지가 없습니다.");
+    return;
+  }
+
+  const failed = [];
+  for (const relPath of relPaths) {
+    try {
+      await cmdUpdate(notion, relPath);
+    } catch (err) {
+      failed.push(relPath);
+      console.error(`❌ ${relPath} 갱신 실패:`, err.body || err.message || err);
+    }
+  }
+
+  console.log(`\n총 ${relPaths.length}개 중 ${relPaths.length - failed.length}개 성공, ${failed.length}개 실패.`);
+  if (failed.length > 0) {
+    console.error("실패 목록:", failed.join(", "));
+    process.exitCode = 1;
+  }
+}
+
 async function cmdCreate(notion, relPath, opts) {
   if (!opts.title || !opts.parent) {
     console.error("create에는 --title과 --parent가 필요합니다 (--icon은 선택).");
@@ -145,11 +172,23 @@ async function main() {
   // feature injects the Authorization header for api.notion.com at the proxy
   // level, so the token never needs to live in this process or in a file.
   // If NOTION_TOKEN is set (e.g. running locally without that proxy), use it.
-  const notion = new Client(process.env.NOTION_TOKEN ? { auth: process.env.NOTION_TOKEN } : {});
+  // node-fetch (used internally by @notionhq/client) doesn't read HTTPS_PROXY
+  // on its own, so route it through the agent proxy explicitly when present —
+  // that's also where the injected credential is attached.
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
+  const notion = new Client({
+    ...(process.env.NOTION_TOKEN ? { auth: process.env.NOTION_TOKEN } : {}),
+    ...(proxyUrl ? { agent: new HttpsProxyAgent(proxyUrl) } : {}),
+  });
   const { cmd, relPath, opts } = parseArgs(process.argv.slice(2));
 
+  if (cmd === "update-all") {
+    await cmdUpdateAll(notion);
+    return;
+  }
+
   if (!cmd || !relPath) {
-    console.error("사용법: node sync.js <update|create> <relative-md-path> [--title X --icon Y --parent Z]");
+    console.error("사용법: node sync.js <update|create> <relative-md-path> [--title X --icon Y --parent Z] | node sync.js update-all");
     process.exit(1);
   }
 
