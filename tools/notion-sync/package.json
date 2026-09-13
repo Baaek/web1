@@ -1,0 +1,11 @@
+{
+  "name": "notion-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "@tryfabric/martian": "^1.2.4",
+    "dotenv": "^16.4.5"
+  }
+}
