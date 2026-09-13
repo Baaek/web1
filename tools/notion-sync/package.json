@@ -6,6 +6,7 @@
   "dependencies": {
     "@notionhq/client": "^2.2.15",
     "@tryfabric/martian": "^1.2.4",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "https-proxy-agent": "^9.1.0"
   }
 }
