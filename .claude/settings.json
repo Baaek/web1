@@ -9,5 +9,10 @@
       "Bash(node sync.js *)",
       "Bash(cd tools/notion-sync && node sync.js *)"
     ]
+  },
+  "sandbox": {
+    "network": {
+      "allowedDomains": ["api.notion.com"]
+    }
   }
 }
