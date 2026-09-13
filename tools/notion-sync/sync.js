@@ -8,6 +8,22 @@
 //
 // Paths are relative to worldbuilding/. Page IDs are tracked in page-map.json.
 
+// Node's built-in fetch (undici) ignores HTTPS_PROXY unless NODE_USE_ENV_PROXY=1
+// is set *before* the process starts (Node >= 22.21) — setting process.env at
+// runtime is too late, undici's proxy agent is already initialized by then.
+// Without it, requests bypass the proxy entirely and hit api.notion.com
+// directly with no injected Authorization header, failing with a 403.
+// Re-exec once with the flag set so this works transparently wherever the
+// proxy-injected-credential feature is the only auth source (no NOTION_TOKEN).
+if (!process.env.NOTION_TOKEN && process.env.NODE_USE_ENV_PROXY !== "1") {
+  const { spawnSync } = require("child_process");
+  const result = spawnSync(process.execPath, [__filename, ...process.argv.slice(2)], {
+    stdio: "inherit",
+    env: { ...process.env, NODE_USE_ENV_PROXY: "1" },
+  });
+  process.exit(result.status ?? 1);
+}
+
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
