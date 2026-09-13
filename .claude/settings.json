@@ -5,7 +5,9 @@
       "mcp__Notion__notion-fetch",
       "mcp__Notion__notion-search",
       "mcp__Notion__notion-create-pages",
-      "mcp__Notion__notion-update-page"
+      "mcp__Notion__notion-update-page",
+      "Bash(node sync.js *)",
+      "Bash(cd tools/notion-sync && node sync.js *)"
     ]
   }
 }
