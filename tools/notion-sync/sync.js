@@ -141,11 +141,11 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  if (!process.env.NOTION_TOKEN) {
-    console.error("NOTION_TOKEN이 .env에 없습니다.");
-    process.exit(1);
-  }
-  const notion = new Client({ auth: process.env.NOTION_TOKEN });
+  // No auth token passed here on purpose: this environment's API-credential
+  // feature injects the Authorization header for api.notion.com at the proxy
+  // level, so the token never needs to live in this process or in a file.
+  // If NOTION_TOKEN is set (e.g. running locally without that proxy), use it.
+  const notion = new Client(process.env.NOTION_TOKEN ? { auth: process.env.NOTION_TOKEN } : {});
   const { cmd, relPath, opts } = parseArgs(process.argv.slice(2));
 
   if (!cmd || !relPath) {
