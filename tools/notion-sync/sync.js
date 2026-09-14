@@ -116,6 +116,56 @@ function preprocessMarkdown(raw, relPath) {
   return banner + text.trimStart();
 }
 
+// Notion's pages.create/blocks.append reject a payload where a block's children
+// are themselves nested more than ~2 levels deep in one call ("children should be
+// not present"). Deeply nested markdown lists (4+ levels) hit this, so flatten
+// anything past depth 2 into siblings at depth 2 instead of failing the whole page.
+function capNestingDepth(blocks) {
+  function flatten(nodes) {
+    const out = [];
+    for (const block of nodes) {
+      const content = block[block.type];
+      if (content && Array.isArray(content.children) && content.children.length) {
+        const children = content.children;
+        delete content.children;
+        out.push(block, ...flatten(children));
+      } else {
+        out.push(block);
+      }
+    }
+    return out;
+  }
+
+  // nodes here is the array a single depth occupies; when a node at depth 2 has
+  // its own children, those must become siblings *within this same array* (not
+  // nested one level deeper inside the node), or the depth violation just moves down one.
+  function cap(nodes, depth) {
+    const out = [];
+    for (const block of nodes) {
+      const content = block[block.type];
+      if (content && Array.isArray(content.children) && content.children.length) {
+        if (depth < 2) {
+          content.children = cap(content.children, depth + 1);
+          out.push(block);
+        } else {
+          const kids = content.children;
+          delete content.children;
+          out.push(block, ...flatten(kids));
+        }
+      } else {
+        out.push(block);
+      }
+    }
+    return out;
+  }
+
+  return cap(blocks, 0);
+}
+
+function toNotionBlocks(processed) {
+  return capNestingDepth(markdownToBlocks(processed));
+}
+
 function extractTitle(raw, relPath) {
   const m = raw.match(/^#\s+(.+)$/m);
   if (m) return m[1].trim();
@@ -176,7 +226,7 @@ async function cmdUpdate(notion, relPath) {
   const fullPath = path.join(WORLDBUILDING_ROOT, relPath);
   const raw = fs.readFileSync(fullPath, "utf8");
   const processed = preprocessMarkdown(raw, relPath);
-  const blocks = markdownToBlocks(processed);
+  const blocks = toNotionBlocks(processed);
 
   await replaceChildren(notion, pageId, blocks);
   console.log(`✅ 갱신 완료: ${relPath} -> https://app.notion.com/p/${pageId.replace(/-/g, "")}`);
@@ -229,7 +279,7 @@ async function cmdOnboardAll(notion) {
       const fullPath = path.join(WORLDBUILDING_ROOT, relPath);
       const raw = fs.readFileSync(fullPath, "utf8");
       const processed = preprocessMarkdown(raw, relPath);
-      const blocks = markdownToBlocks(processed);
+      const blocks = toNotionBlocks(processed);
       const parts = chunk(blocks, APPEND_CHUNK_SIZE);
       const title = extractTitle(raw, relPath);
 
@@ -270,7 +320,7 @@ async function cmdCreate(notion, relPath, opts) {
   const fullPath = path.join(WORLDBUILDING_ROOT, relPath);
   const raw = fs.readFileSync(fullPath, "utf8");
   const processed = preprocessMarkdown(raw, relPath);
-  const blocks = markdownToBlocks(processed);
+  const blocks = toNotionBlocks(processed);
   const parts = chunk(blocks, APPEND_CHUNK_SIZE);
 
   const page = await notion.pages.create({
