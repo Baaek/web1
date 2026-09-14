@@ -75,7 +75,7 @@ print(len(bad),"broken")
 
 그다음 **커밋 → `claude/worldbuilding-history-creator-2tbmxj` 브랜치로 푸시.**
 
-**Notion에는 자동으로 반영하지 않는다** — 사용자가 "노션에 반영해줘"라고 할 때만 동기화한다.
+**Notion은 매일 새벽 2시(KST)에 자동 동기화된다** — 예약된 작업이 이 브랜치를 받아 `tools/notion-sync/sync.js update-all`을 실행해 `page-map.json`에 매핑된 문서 전체를 그 시점의 git 최신본으로 덮어쓴다. 중간에 고친 내용은 다음 새벽 배치에 반영되므로, 즉시 반영이 필요하면 사용자가 "노션에 반영해줘"라고 요청할 때 그 자리에서 동기화한다.
 
 보고는 **짧게.** 장문 서술은 파일에만 남기고 대화창에 반복하지 않는다.
 
