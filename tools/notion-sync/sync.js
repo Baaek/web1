@@ -122,9 +122,27 @@ function extractTitle(raw, relPath) {
   return path.basename(relPath, ".md");
 }
 
+// Groups blocks respecting both a max count (Notion's 100-blocks/call cap) and a max
+// combined JSON byte size (Notion's ~500KB request body cap) — a chunk of 90 small
+// blocks is fine, but 90 blocks that happen to be large (long paragraphs/tables) can
+// blow past the byte limit and get rejected with 413 even though the count is legal.
+const MAX_CHUNK_BYTES = 350_000;
+
 function chunk(arr, size) {
   const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  let current = [];
+  let currentBytes = 0;
+  for (const item of arr) {
+    const itemBytes = JSON.stringify(item).length;
+    if (current.length > 0 && (current.length >= size || currentBytes + itemBytes > MAX_CHUNK_BYTES)) {
+      out.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(item);
+    currentBytes += itemBytes;
+  }
+  if (current.length > 0) out.push(current);
   return out;
 }
 
