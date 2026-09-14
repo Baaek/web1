@@ -6,8 +6,11 @@
 //   node sync.js update <relative-md-path>                     # replace an existing page's content
 //   node sync.js update-all                                    # replace all pages tracked in page-map.json
 //   node sync.js create <relative-md-path> --title "..." --icon "🔬" --parent <page_id>
+//   node sync.js onboard-all                                   # create Notion pages for every .md not yet tracked
 //
 // Paths are relative to worldbuilding/. Page IDs are tracked in page-map.json.
+// Folder pages created by onboard-all (mirroring worldbuilding/'s subdirectories)
+// are tracked separately in folder-map.json, keyed by the directory's relative path.
 
 const fs = require("fs");
 const path = require("path");
@@ -18,15 +21,74 @@ const { HttpsProxyAgent } = require("https-proxy-agent");
 
 const WORLDBUILDING_ROOT = path.join(__dirname, "..", "..", "worldbuilding");
 const PAGE_MAP_PATH = path.join(__dirname, "page-map.json");
+const FOLDER_MAP_PATH = path.join(__dirname, "folder-map.json");
 const APPEND_CHUNK_SIZE = 90; // Notion caps children-append at 100 blocks/call; stay under it
+// Parent of the 7 pre-existing top-level pages ("🌍 요르문간드 연대기 위키"). New top-level
+// docs nest directly under it too; onboard-all creates folder pages under it for subdirectories.
+const ROOT_PARENT_ID = "3c1f0578-920b-8115-8d16-dcd5306ef2f4";
+
+function loadJsonMap(mapPath) {
+  if (!fs.existsSync(mapPath)) return {};
+  return JSON.parse(fs.readFileSync(mapPath, "utf8"));
+}
+
+function saveJsonMap(mapPath, map) {
+  fs.writeFileSync(mapPath, JSON.stringify(map, null, 2) + "\n");
+}
 
 function loadPageMap() {
-  if (!fs.existsSync(PAGE_MAP_PATH)) return {};
-  return JSON.parse(fs.readFileSync(PAGE_MAP_PATH, "utf8"));
+  return loadJsonMap(PAGE_MAP_PATH);
 }
 
 function savePageMap(map) {
-  fs.writeFileSync(PAGE_MAP_PATH, JSON.stringify(map, null, 2) + "\n");
+  saveJsonMap(PAGE_MAP_PATH, map);
+}
+
+function loadFolderMap() {
+  return loadJsonMap(FOLDER_MAP_PATH);
+}
+
+function saveFolderMap(map) {
+  saveJsonMap(FOLDER_MAP_PATH, map);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Recursively lists every .md file under worldbuilding/, as POSIX-style paths
+// relative to it (matching the keys already used in page-map.json).
+function walkMdFiles(dir, base) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === ".git") continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkMdFiles(full, base));
+    else if (entry.name.endsWith(".md")) out.push(path.relative(base, full).split(path.sep).join("/"));
+  }
+  return out;
+}
+
+// Ensures a Notion "folder" page exists for dirRelPath (e.g. "characters/백-정"),
+// creating parent folders first as needed, and returns its page id.
+async function getOrCreateFolder(notion, folderMap, dirRelPath) {
+  if (dirRelPath === "." || dirRelPath === "") return ROOT_PARENT_ID;
+  if (folderMap[dirRelPath]) return folderMap[dirRelPath];
+
+  const parentDir = path.posix.dirname(dirRelPath);
+  const parentId = await getOrCreateFolder(notion, folderMap, parentDir);
+  const title = path.posix.basename(dirRelPath);
+
+  const page = await notion.pages.create({
+    parent: { type: "page_id", page_id: parentId },
+    icon: { type: "emoji", emoji: "📁" },
+    properties: { title: [{ text: { content: title } }] },
+  });
+  folderMap[dirRelPath] = page.id;
+  saveFolderMap(folderMap);
+  console.log(`📁 폴더 생성: ${dirRelPath}`);
+  await sleep(300);
+  return page.id;
 }
 
 // Mirrors the manual preprocessing used for the first sync round:
@@ -127,6 +189,60 @@ async function cmdUpdateAll(notion) {
   }
 }
 
+async function cmdOnboardAll(notion) {
+  const pageMap = loadPageMap();
+  const folderMap = loadFolderMap();
+  const allFiles = walkMdFiles(WORLDBUILDING_ROOT, WORLDBUILDING_ROOT);
+  const todo = allFiles.filter((relPath) => !pageMap[relPath]);
+
+  if (todo.length === 0) {
+    console.log("새로 만들 문서가 없습니다 — 전부 page-map.json에 이미 있음.");
+    return;
+  }
+  console.log(`총 ${todo.length}개 신규 문서를 생성합니다 (전체 ${allFiles.length}개 중).`);
+
+  let ok = 0;
+  const failed = [];
+  for (const relPath of todo) {
+    try {
+      const dir = path.posix.dirname(relPath);
+      const parentId = await getOrCreateFolder(notion, folderMap, dir);
+
+      const fullPath = path.join(WORLDBUILDING_ROOT, relPath);
+      const raw = fs.readFileSync(fullPath, "utf8");
+      const processed = preprocessMarkdown(raw, relPath);
+      const blocks = markdownToBlocks(processed);
+      const parts = chunk(blocks, APPEND_CHUNK_SIZE);
+      const title = extractTitle(raw, relPath);
+
+      const page = await notion.pages.create({
+        parent: { type: "page_id", page_id: parentId },
+        properties: { title: [{ text: { content: title } }] },
+        children: parts[0] || [],
+      });
+      for (const part of parts.slice(1)) {
+        await notion.blocks.children.append({ block_id: page.id, children: part });
+        await sleep(300);
+      }
+
+      pageMap[relPath] = page.id;
+      savePageMap(pageMap);
+      ok++;
+      console.log(`✅ (${ok}/${todo.length}) 생성: ${relPath}`);
+      await sleep(300);
+    } catch (err) {
+      failed.push(relPath);
+      console.error(`❌ ${relPath} 생성 실패:`, err.body || err.message || err);
+    }
+  }
+
+  console.log(`\n총 ${todo.length}개 중 ${ok}개 성공, ${failed.length}개 실패.`);
+  if (failed.length > 0) {
+    console.error("실패 목록:", failed.join(", "));
+    process.exitCode = 1;
+  }
+}
+
 async function cmdCreate(notion, relPath, opts) {
   if (!opts.title || !opts.parent) {
     console.error("create에는 --title과 --parent가 필요합니다 (--icon은 선택).");
@@ -186,9 +302,15 @@ async function main() {
     await cmdUpdateAll(notion);
     return;
   }
+  if (cmd === "onboard-all") {
+    await cmdOnboardAll(notion);
+    return;
+  }
 
   if (!cmd || !relPath) {
-    console.error("사용법: node sync.js <update|create> <relative-md-path> [--title X --icon Y --parent Z] | node sync.js update-all");
+    console.error(
+      "사용법: node sync.js <update|create> <relative-md-path> [--title X --icon Y --parent Z] | node sync.js update-all | node sync.js onboard-all"
+    );
     process.exit(1);
   }
 
