@@ -74,21 +74,32 @@ web1/
 
 ## 4. 작업 후 절차
 
-```python
-# 링크 무결성 — 0건이어야 한다. worldbuilding/에서 실행
-# 공통/ 은 의도적 스냅샷이라 상대 링크가 원본 위치 기준이므로 제외한다
-import os,re,urllib.parse
-bad=[]
-for root,d,files in os.walk('.'):
-    if '.git' in root or root.startswith('./공통'): continue
-    for f in files:
-        if not f.endswith('.md'): continue
-        p=os.path.join(root,f)
-        for m in re.finditer(r'\]\((\.{1,2}/[^)#]+?)(?:#[^)]*)?\)', open(p,encoding='utf-8').read()):
-            t=urllib.parse.unquote(m.group(1))
-            if not os.path.exists(os.path.normpath(os.path.join(root,t))): bad.append((p,t))
-print(len(bad),"broken")
+```bash
+python3 tools/canon-check.py     # 위반 0건이어야 한다. --verbose 로 상세
 ```
+
+네 가지를 한 번에 본다.
+
+| 검사 | 내용 |
+|---|---|
+| **링크 무결성** | 상대링크가 실제 파일을 가리키는가 (`공통/`은 의도적 스냅샷이라 제외) |
+| **메타 진실 누출** | 1절의 금칙어가 인물 입에 올랐는가 |
+| **등급·RSU 정합** | 19번 특성 표의 등급이 RSU 구간과 맞는가 |
+| **요르문간드 금지** | 기원 열에 요르문간드가 올라갔는가 |
+
+### 메타 진실 누출 검사가 보는 것
+
+**층은 파일이 아니라 목소리다.** 같은 파일 안에서도 작가 주석은 「라그나로크」를 써도 되고 인물 대사는 안 된다. 그래서 구역별로 엄격도가 다르다.
+
+| 구역 | 엄격도 |
+|---|---|
+| **`novel/`** | **서술자 포함 전면 금지** — 독자가 읽는 글이다 |
+| `events/`·`countries/`·`characters/`·`monthly/` | **인용·대사 안에서만 금지** — 큰따옴표·「」 안 |
+| `worldbuilding/` 루트, 작가 블록 안 | 검사하지 않는다 |
+
+- **금칙어는 손으로 관리하지 않는다.** 기본 7개 외에, [19번](worldbuilding/19-특성과권능.md) 표의 **「기원」 열에서 신 이름을 자동 수집**한다 — 새 특성을 추가하면 금칙어가 저절로 늘어난다
+- **작가 전용 내용은 블록으로 감싼다.** `<!-- 작가용:시작 -->` … `<!-- 작가용:끝 -->`. 이 안은 검사에서 빠지며, 나중에 집필 세션 AI에게 이 블록만 가리는 것도 이 마커로 한다
+- **정당한 예외는 표시한다.** 튤레의 후예가 자기 신화 해석으로 "라그나로크"를 말하는 것은 설정의 일부다. 그 줄 위에 `<!-- 메타허용: 사유 -->`를 달면 넘어간다(자기 줄과 바로 다음 줄에 적용)
 
 그다음 **커밋 → `claude/worldbuilding-history-creator-2tbmxj` 브랜치로 푸시.**
 
