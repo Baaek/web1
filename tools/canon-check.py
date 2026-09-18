@@ -38,6 +38,8 @@ TITLE_SAFE = ['요르문간드 연대기']
 #   quoted : 인용·대사 안에서만 금지 — 작가만 보는 자료
 #   free   : 검사하지 않음 — 정본과 작가 블록
 STRICT_DIRS = ['novel']
+# 분리한 물리 문서 — 작가 블록 밖에 기원 용어가 남으면 분리가 무너진 것이다
+STRICT_FILES = ['worldbuilding/20-세계의물리.md']
 QUOTED_DIRS = ['worldbuilding/events', 'worldbuilding/countries',
                'worldbuilding/characters', 'worldbuilding/monthly']
 
@@ -118,13 +120,16 @@ def check_meta():
     n = 0
     targets = [(os.path.join(REPO, d), 'strict') for d in STRICT_DIRS] + \
               [(os.path.join(REPO, d), 'quoted') for d in QUOTED_DIRS]
+    files = [(os.path.join(REPO, f), 'strict') for f in STRICT_FILES]
     for base, mode in targets:
         if not os.path.isdir(base): continue
-        for p in md_files(base, skip_common=False):
+        files += [(q, mode) for q in md_files(base, skip_common=False)]
+    for p, mode in files:
+        if os.path.exists(p):
             raw = open(p, encoding='utf-8').read()
-            # 작가 블록 제거
+            # 작가 블록은 빈 줄로 바꾼다 — 지우면 줄 번호가 밀린다
             body = re.sub(re.escape(AUTHOR_OPEN)+r'.*?'+re.escape(AUTHOR_CLOSE),
-                          '', raw, flags=re.S)
+                          lambda m: '\n' * m.group(0).count('\n'), raw, flags=re.S)
             lines = body.split('\n')
             for i, line in enumerate(lines, 1):
                 # 허용 마크는 자기 줄과 바로 다음 줄에 적용된다
