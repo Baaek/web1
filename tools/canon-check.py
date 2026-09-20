@@ -10,6 +10,9 @@
   2. 메타 진실 누출   라그나로크·아우터 플레인 등이 인물 입에 올랐는가
   3. 등급·RSU 정합    19번 특성 표의 등급이 RSU 구간과 맞는가
   4. 요르문간드 금지  기원 목록에 요르문간드가 올라갔는가
+  5. 정전 명세 정합   canon-spec.json 의 항목이 문서에 실제로 살아 있는가
+
+  python3 tools/canon-check.py --new-dimension   # 새 차원에서 정해야 할 것 목록
 
 종료 코드 0 = 통과, 1 = 위반 있음.
 """
@@ -21,6 +24,7 @@ WB   = os.path.join(REPO, 'worldbuilding')
 NOVEL= os.path.join(REPO, 'novel')
 
 VERBOSE = '--verbose' in sys.argv
+SPEC_PATH = os.path.join(WB, 'canon-spec.json')
 
 # ── 메타 진실 기본 금칙어 ───────────────────────────────────────────────
 # 등장인물이 도달할 수 있는 최대치는 "질량을 가진 무언가가 있고 셀 수 있는
@@ -175,10 +179,79 @@ def check_jormungand():
         if '요르문간드' in cell:
             add('금지', f, i, '기원 열에 「요르문간드」 — 신이 아니라 시공간 그 자체다')
 
+# ── 5. 정전 명세(canon-spec.json) 정합 ────────────────────────────────
+def load_spec():
+    if not os.path.exists(SPEC_PATH): return None
+    return json.load(open(SPEC_PATH, encoding='utf-8'))
+
+def _marks(item, key):
+    v = item.get(key)
+    if v is None: return []
+    return v if isinstance(v, list) else [v]
+
+def check_spec():
+    spec = load_spec()
+    if spec is None:
+        add('명세', SPEC_PATH, 0, 'canon-spec.json 이 없다'); return
+    n = 0
+    seen = set()
+    for group, docs_key, mark_key in [('고정', '출처', '본문표지'),
+                                      ('차원별', '나타나는곳', '값표지')]:
+        for item in spec.get(group, []):
+            n += 1
+            i_id = item.get('id')
+            if not i_id or i_id in seen:
+                add('명세', SPEC_PATH, 0, f'id 누락 또는 중복: {i_id!r}')
+            seen.add(i_id)
+            docs = _marks(item, docs_key) + _marks(item, '정본')
+            if not docs:
+                add('명세', SPEC_PATH, 0, f'[{i_id}] {docs_key} 가 비어 있다'); continue
+            texts = []
+            for d in docs:
+                fp = os.path.join(WB, d)
+                if not os.path.exists(fp):
+                    add('명세', SPEC_PATH, 0, f'[{i_id}] 문서 없음: {d}'); continue
+                texts.append((d, open(fp, encoding='utf-8').read()))
+            marks = _marks(item, mark_key)
+            if not (texts and marks): continue
+            # ① 표지마다 — 어느 문서에도 없으면 그 값이 통째로 사라진 것
+            for mark in marks:
+                if not any(mark in t for _, t in texts):
+                    where = ' / '.join(d for d, _ in texts)
+                    add('명세', SPEC_PATH, 0,
+                        f'[{i_id}] "{mark}" 가 {where} 어디에도 없다 — 설정이 바뀌었으면 명세도 고칠 것')
+            # ② 문서마다 — 표지를 하나도 안 가진 문서는 그 문서에서만 값이 빠진 것
+            for d, t in texts:
+                if not any(mark in t for mark in marks):
+                    add('명세', SPEC_PATH, 0,
+                        f'[{i_id}] {d} 에 {marks} 중 아무것도 없다 — 이 문서에서만 값이 어긋났다')
+    checked['명세'] = n
+
+def print_new_dimension():
+    spec = load_spec()
+    if spec is None:
+        print('canon-spec.json 이 없다.'); return 1
+    print('새 차원을 시작할 때\n')
+    print('■ 그대로 가져가는 것 (변경 불가)\n')
+    for it in spec.get('고정', []):
+        meta = '  ⛔작가전용' if it.get('메타전용') else ''
+        print(f"  · {it['이름']}{meta}\n      {it['정의']}")
+    print(f"\n■ 새로 정해야 하는 것 ({len(spec.get('차원별', []))}개)\n")
+    for it in spec.get('차원별', []):
+        print(f"  · {it['이름']}")
+        print(f"      차원 {spec.get('차원')}: {it['384']}")
+        if it.get('비고'): print(f"      비고: {it['비고']}")
+    print('\n' + '─'*60)
+    print('고정 항목의 본문은 20-세계의물리.md 와 21-기원-작가전용.md 에 있다.')
+    print('둘 다 〔공통〕이므로 문서째로 가져가면 된다.')
+    return 0
+
 # ── 실행 ───────────────────────────────────────────────────────────────
 def main():
+    if '--new-dimension' in sys.argv:
+        return print_new_dimension()
     print('캐논 검증기 — 「요르문간드 연대기」\n')
-    for fn in (check_links, check_meta, check_rsu, check_jormungand):
+    for fn in (check_links, check_meta, check_rsu, check_jormungand, check_spec):
         fn()
     for k, v in checked.items():
         print(f'  {k:4s} 검사 대상 {v}건')
