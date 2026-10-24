@@ -11,6 +11,7 @@
   3. 등급·RSU 정합    19번 특성 표의 등급이 RSU 구간과 맞는가
   4. 요르문간드 금지  기원 목록에 요르문간드가 올라갔는가
   5. 정전 명세 정합   canon-spec.json 의 항목이 문서에 실제로 살아 있는가
+  6. 물리 3규칙 위반  마나 창조 / 게이트 통과 / 상쇄·이완 정의 뒤바뀜
 
   python3 tools/canon-check.py --new-dimension   # 새 차원에서 정해야 할 것 목록
 
@@ -48,6 +49,7 @@ QUOTED_DIRS = ['worldbuilding/events', 'worldbuilding/countries',
                'worldbuilding/characters', 'worldbuilding/monthly']
 
 AUTHOR_OPEN, AUTHOR_CLOSE = '<!-- 작가용:시작 -->', '<!-- 작가용:끝 -->'
+RULE_ALLOW = '<!-- 규칙허용'          # 물리 규칙 검사 예외 (자기 줄과 다음 줄)
 ALLOW_MARK = '<!-- 메타허용'          # 이 주석이 붙은 줄과 바로 다음 줄은 건너뛴다
 
 problems, checked = [], {}
@@ -246,12 +248,56 @@ def print_new_dimension():
     print('둘 다 〔공통〕이므로 문서째로 가져가면 된다.')
     return 0
 
+# ── 6. 물리 3규칙 위반 ─────────────────────────────────────────────────
+# 규칙을 **진술하는** 문장(부정문)과 **시도하는** 문장(의도형)은 위반이 아니다.
+# 잡는 것은 규칙이 깨진 것을 **사실로 서술하는** 문장뿐이다.
+NEG_RE    = re.compile(r'아니라|아니다|않|못|없|불가|금지|성립하지|안 된|안된|수 없')
+INTENT_RE = re.compile(r'려는|려고|려 했|려 한|하려|시도|척|듯|처럼|라면|다면|가정')
+PHYS_RULES = [
+  ('창조', re.compile(
+     r'(무(?:\(無\))?에서|허공에서|아무것도 없는 곳에서)[^.。\n]{0,24}(만들|생성|창조|소환|피워|뽑아)'
+     r'|(불|물|화염|얼음|번개|전류|불꽃|빛)(?:을|를|이|가)?\s*'
+     r'(만들어 ?냈|창조했|생성했|소환했|만들어 ?낸다|창조한다|생성한다|소환한다)'),
+   '마나는 창조하지 않는다 — 있는 것을 키울 뿐이다'),
+  ('통과', re.compile(
+     r'게이트\s*(?:안|안쪽|속|내부|너머)(?:으로|에|에서|를|로)\s*[^.。\n]{0,12}'
+     r'(들어갔|들어간다|진입했|진입한다|건너갔|건너간다|넘어갔|넘어간다|통과했|통과한다|이동했|체류했|탐사했)'
+     r'|게이트(?:를|에)\s*(통과했|통과한다|들어갔|들어간다|진입했|진입한다|건너갔|건너간다)'),
+   '게이트에는 들어갈 수 없다 — 통과시키려 한 것은 소멸한다'),
+  ('뒤바뀜', re.compile(r'상쇄[^.\n]{0,18}(흐트러|이완됨)|이완[^.\n]{0,18}(소실|사라졌|사라진다)'),
+   '상쇄 = 국소 소실 / 이완 = 존재론적 흐트러짐 — 정의가 뒤바뀌었다'),
+]
+PHYS_DIRS = ['novel', 'worldbuilding/events', 'worldbuilding/characters',
+             'worldbuilding/countries', 'worldbuilding/monthly']
+
+def check_physics():
+    n = 0
+    for d in PHYS_DIRS:
+        base = os.path.join(REPO, d)
+        if not os.path.isdir(base): continue
+        for p in md_files(base, skip_common=False):
+            raw = open(p, encoding='utf-8').read()
+            body = re.sub(re.escape(AUTHOR_OPEN)+r'.*?'+re.escape(AUTHOR_CLOSE),
+                          lambda m: '\n' * m.group(0).count('\n'), raw, flags=re.S)
+            lines = body.split('\n')
+            for i, line in enumerate(lines, 1):
+                if RULE_ALLOW in line or (i >= 2 and RULE_ALLOW in lines[i-2]): continue
+                n += 1
+                for tag, rx, why in PHYS_RULES:
+                    m = rx.search(line)
+                    if not m: continue
+                    ctx = line[max(0, m.start()-40): m.end()+40]
+                    if tag != '뒤바뀜' and (NEG_RE.search(ctx) or INTENT_RE.search(ctx)):
+                        continue
+                    add('물리', p, i, f'[{tag}] {why} — "{m.group(0)[:40]}"')
+    checked['물리'] = n
+
 # ── 실행 ───────────────────────────────────────────────────────────────
 def main():
     if '--new-dimension' in sys.argv:
         return print_new_dimension()
     print('캐논 검증기 — 「요르문간드 연대기」\n')
-    for fn in (check_links, check_meta, check_rsu, check_jormungand, check_spec):
+    for fn in (check_links, check_meta, check_rsu, check_jormungand, check_spec, check_physics):
         fn()
     for k, v in checked.items():
         print(f'  {k:4s} 검사 대상 {v}건')
